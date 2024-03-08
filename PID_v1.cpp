@@ -1,8 +1,8 @@
 /**********************************************************************************************
- * Arduino PID Library - Version 1.2.1
+ * Arduino PID Library - Version 1.1.1
  * by Brett Beauregard <br3ttb@gmail.com> brettbeauregard.com
  *
- * This Library is licensed under the MIT License
+ * This Library is licensed under a GPLv3 License
  **********************************************************************************************/
 
 #if ARDUINO >= 100
@@ -17,8 +17,8 @@
  *    The parameters specified here are those for for which we can't set up
  *    reliable defaults, so we need to have the user set them.
  ***************************************************************************/
-PID::PID(double* Input, double* Output, double* Setpoint,
-        double Kp, double Ki, double Kd, int POn, int ControllerDirection)
+PID::PID(volatile double* Input, volatile double* Output, volatile double* Setpoint,
+        volatile double Kp, volatile double Ki, volatile double Kd, volatile int POn, volatile int ControllerDirection)
 {
     myOutput = Output;
     myInput = Input;
@@ -29,11 +29,14 @@ PID::PID(double* Input, double* Output, double* Setpoint,
 												//the arduino pwm limits
 
     SampleTime = 100;							//default Controller Sample Time is 0.1 seconds
-
+	
+	tolerance=0;								//default tolerance is zero
+	
+	PID::SetIntergralMemory (-1);				//default integral memory duration (in cycle times) is infinite
+	
     PID::SetControllerDirection(ControllerDirection);
     PID::SetTunings(Kp, Ki, Kd, POn);
 
-    lastTime = millis()-SampleTime;
 }
 
 /*Constructor (...)*********************************************************
@@ -41,8 +44,8 @@ PID::PID(double* Input, double* Output, double* Setpoint,
  *    to use Proportional on Error without explicitly saying so
  ***************************************************************************/
 
-PID::PID(double* Input, double* Output, double* Setpoint,
-        double Kp, double Ki, double Kd, int ControllerDirection)
+PID::PID(volatile double* Input, volatile double* Output, volatile double* Setpoint,
+        volatile double Kp, volatile double Ki, volatile double Kd, volatile int ControllerDirection)
     :PID::PID(Input, Output, Setpoint, Kp, Ki, Kd, P_ON_E, ControllerDirection)
 {
 
@@ -58,40 +61,60 @@ PID::PID(double* Input, double* Output, double* Setpoint,
 bool PID::Compute()
 {
    if(!inAuto) return false;
-   unsigned long now = millis();
-   unsigned long timeChange = (now - lastTime);
-   if(timeChange>=SampleTime)
+   
+   /*Compute all the working error variables*/
+   volatile double input = *myInput;
+   volatile double error = *mySetpoint - input;
+   volatile double dInput = (input - lastInput);
+   
+   /*Account for the tolerance*/
+   if (abs(error) < abs(tolerance)) 
    {
-      /*Compute all the working error variables*/
-      double input = *myInput;
-      double error = *mySetpoint - input;
-      double dInput = (input - lastInput);
-      outputSum+= (ki * error);
-
-      /*Add Proportional on Measurement, if P_ON_M is specified*/
-      if(!pOnE) outputSum-= kp * dInput;
-
-      if(outputSum > outMax) outputSum= outMax;
-      else if(outputSum < outMin) outputSum= outMin;
-
-      /*Add Proportional on Error, if P_ON_E is specified*/
-	   double output;
-      if(pOnE) output = kp * error;
-      else output = 0;
-
-      /*Compute Rest of PID Output*/
-      output += outputSum - kd * dInput;
-
-	    if(output > outMax) output = outMax;
-      else if(output < outMin) output = outMin;
-	    *myOutput = output;
-
-      /*Remember some variables for next time*/
-      lastInput = input;
-      lastTime = now;
-	    return true;
+	   error=0;
+	   dInput=0;
    }
-   else return false;
+   
+   outputSum+= (ki * error);
+   
+   /*Add Proportional on Measurement, if P_ON_M is specified*/
+   if(!pOnE) outputSum-= kp * dInput;
+   
+   if(outputSum > outMax) outputSum= outMax;
+   else if(outputSum < outMin) outputSum= outMin;
+   
+   /*Add Proportional on Error, if P_ON_E is specified*/
+   volatile double output;
+   if(pOnE) output = kp * error;
+   else output = 0;
+   
+   /*Compute Rest of PID Output*/
+   output += outputSum - kd * dInput;
+   
+   if(output > outMax) output = outMax;
+   else if(output < outMin) output = outMin;
+   *myOutput = output;
+   
+   /*Reset the the integral summation variable outputSum at steady state*/
+   if (ImemCounter>0 )
+   {
+	   if (error==0)
+	   {
+		   ImemCounter--;
+		   if (ImemCounter==0)
+		   {
+			   outputSum=0;
+			   ImemCounter=Imem;
+		   }
+	   }
+	   else
+	   {
+		   ImemCounter=Imem;
+	   }
+   }
+   
+   /*Remember some variables for next time*/
+   lastInput = input;
+   return true;
 }
 
 /* SetTunings(...)*************************************************************
@@ -204,18 +227,36 @@ void PID::SetControllerDirection(int Direction)
 {
    if(inAuto && Direction !=controllerDirection)
    {
-	    kp = (0 - kp);
+	  kp = (0 - kp);
       ki = (0 - ki);
       kd = (0 - kd);
    }
    controllerDirection = Direction;
 }
 
+/* SetTolerance(...)*************************************************
+ * Tolerance is set to kill the output if the error is less than the absolute tolerance
+ ******************************************************************************/
+void PID::SetTolerance(int tol)
+{
+	tolerance = tol;
+}
+/* SetIntergralMemory(...)*************************************************
+ * integral memory duration (in compute cycle) is infinite by default, which means 
+ * the integral summation variable will keep increasing indefinitely. By choosing
+ * a positive number for the Imem you can reset the integral summation 
+ * variable to zero after (Imem) number of compute cycles
+ ******************************************************************************/
+void PID::SetIntergralMemory(int mem)
+{
+	Imem = mem;
+	ImemCounter = mem;
+}
 /* Status Funcions*************************************************************
  * Just because you set the Kp=-1 doesn't mean it actually happened.  these
  * functions query the internal state of the PID.  they're here for display
  * purposes.  this are the functions the PID Front-end uses for example
- ******************************************************************************/
+ *************************	*****************************************************/
 double PID::GetKp(){ return  dispKp; }
 double PID::GetKi(){ return  dispKi;}
 double PID::GetKd(){ return  dispKd;}

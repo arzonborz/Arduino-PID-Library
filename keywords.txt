@@ -23,6 +23,9 @@ GetKi	KEYWORD2
 GetKd	KEYWORD2
 GetMode	KEYWORD2
 GetDirection	KEYWORD2
+SetIntergralMemory	KEYWORD2
+SetTolerance		KEYWORD2
+Initialize		KEYWORD2	
 
 #######################################
 # Constants (LITERAL1)
